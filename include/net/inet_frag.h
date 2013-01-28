@@ -5,6 +5,7 @@ struct netns_frags {
 	int			nqueues;
 	atomic_t		mem;
 	struct list_head	lru_list;
+	spinlock_t		lru_lock;
 
 	/* sysctls */
 	int			timeout;
@@ -80,4 +81,32 @@ static inline void inet_frag_put(struct inet_frag_queue *q, struct inet_frags *f
 		inet_frag_destroy(q, f, NULL);
 }
 
+/* Memory Tracking Functions. */
+
+/* The default percpu_counter batch size is not big enough to scale to
+ * fragmentation mem acct sizes.
+ * The mem size of a 64K fragment is approx:
+ *  (44 fragments * 2944 truesize) + frag_queue struct(200) = 129736 bytes
+ */
+static inline void inet_frag_lru_move(struct inet_frag_queue *q)
+{
+	spin_lock(&q->net->lru_lock);
+	list_move_tail(&q->lru_list, &q->net->lru_list);
+	spin_unlock(&q->net->lru_lock);
+}
+
+static inline void inet_frag_lru_del(struct inet_frag_queue *q)
+{
+	spin_lock(&q->net->lru_lock);
+	list_del(&q->lru_list);
+	spin_unlock(&q->net->lru_lock);
+}
+
+static inline void inet_frag_lru_add(struct netns_frags *nf,
+				     struct inet_frag_queue *q)
+{
+	spin_lock(&nf->lru_lock);
+	list_add_tail(&q->lru_list, &nf->lru_list);
+	spin_unlock(&nf->lru_lock);
+}
 #endif
